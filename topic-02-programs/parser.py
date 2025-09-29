@@ -11,25 +11,9 @@ ebnf = """
     term = factor { "*"|"/" factor }
     expression = term { "+"|"-" term }
     statement = <print> expression | expression
-    program = expression
+    program = expression { ";" expression }
 """
 
-bnf = """
-    factor = <number>
-    factor = <identifier>
-    factor = "(" expression ")"
-
-    term = factor { "*"|"/" factor }
-    term = term * factor
-    term = term / factor
-
-    expression = term 
-    expression = expression + term
-    expression = expression - term
-
-    statement = <print> expression
-    statement = expression
-"""
 
 def parse_factor(tokens):
     """
@@ -155,13 +139,37 @@ def test_parse_statement():
     ast, tokens = parse_statement(tokens)
     assert ast == {'tag': 'print', 'value': {'tag': '*', 'left': {'tag': 'number', 'value': 2}, 'right': {'tag': 'number', 'value': 4}}}
 
+def parse_program(tokens):
+    """
+    program = [ statement { ";" statement } ] ;
+    """
+    statements = []
+    if tokens[0]["tag"]:
+        statement, tokens = parse_statement(tokens)
+        statements.append(statement)
+        while tokens[0]["tag"] == ";":
+            tokens = tokens[1:]
+            statement, tokens = parse_statement(tokens)
+            statements.append(statement)
+    assert (
+        tokens[0]["tag"] == None
+    ), f"Expected end of input at position {tokens[0]['position']}, got [{tokens[0]}]"
+    return {"tag": "program", "statements": statements}, tokens[1:]
 
+def test_parse_program():
+    """program = [ statement { ";" statement } ]"""
+    print("testing parse_program...")
+    ast, tokens = parse_program(tokenize("print 1; print 2"))
+    assert ast == {
+        "tag": "program",
+        "statements": [
+            {"tag": "print", "value": {"tag": "number", "value": 1}},
+            {"tag": "print", "value": {"tag": "number", "value": 2}},
+        ],
+    }
 
 def parse(tokens):
-    """
-        program = expression
-    """
-    ast, _ = parse_statement(tokens)
+    ast, _ = parse_program(tokens)
     return ast
 
 def test_parse():
@@ -170,9 +178,9 @@ def test_parse():
     """
     print("testing parse()")
     tokens = tokenize("1+(2+3)*4")
-    ast1, _ = parse_statement(tokens)
+    ast1, _ = parse_program(tokens)
     ast2 = parse(tokens)
-    assert ast1 == ast2, "parse() is not evaluating via parse_expression()"
+    assert ast1 == ast2, "parse() is not evaluating via parse_program()"
 
 
 
@@ -181,5 +189,6 @@ if __name__ == "__main__":
     test_parse_term()
     test_parse_expression()
     test_parse_statement()
+    test_parse_program()
     test_parse()
     print("done.")
