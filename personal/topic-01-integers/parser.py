@@ -115,7 +115,7 @@ def test_parse_term():
     assert ast == {'tag': '/', 'left': {'tag': '*', 'left': {'tag': 'number', 'value': 2}, 'right': {'tag': 'number', 'value': 4}}, 'right': {'tag': 'number', 'value': 6}}
 
     # Added test cases
-    for s in ["1","22","333"]:
+    for s in ["432","45421","3"]:
         tokens = tokenize(s)
         ast, tokens = parse_term(tokens)
         assert ast=={'tag': 'number', 'value': int(s)}
