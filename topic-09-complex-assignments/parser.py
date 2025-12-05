@@ -7,8 +7,6 @@ from pprint import pprint
 
 # can't look for function in block for assignment
 
-
-
 # NOTE - ADD simple-expression = ... "(" expression ")"
 
 grammar = """
@@ -34,6 +32,9 @@ grammar = """
     return_statement = "return" [ expression ]
     print_statement = "print" [ expression ]
     function_statement = "function" identifier "(" [ identifier { "," identifier } ] ")" statements
+    
+    class_statement = "class" identifier "{" "members" identifier { "," identifier } ";" { class_method } "}"
+    class_method = ( "constructor" "(" [ identifier { "," identifier } ] ")" statement_list ) | ( "function" identifier "(" [ identifier { "," identifier } ] ")" statement_list )
 
     if_statement = "if" "(" expression ")" statement_list [ "else" (if_statement | statement_list) ]
     while_statement = "while" "(" expression ")" statement_list
@@ -44,7 +45,7 @@ grammar = """
     break_statement = "break"
     continue_statement = "continue"
 
-    statement = if_statement | while_statement | function_statement | return_statement | print_statement | exit_statement | import_statement | break_statement | continue_statement | assert_statement | expression
+    statement = if_statement | while_statement | class_statement | function_statement | return_statement | print_statement | exit_statement | import_statement | break_statement | continue_statement | assert_statement | expression
 
     program = [ statement { ";" statement } {";"} ]
     """
@@ -64,6 +65,9 @@ def parse_simple_expression(tokens):
     
     if token["tag"] == "null":
         return {"tag": "null"}, tokens[1:]
+    
+    if token["tag"] == "this":
+        return {"tag": "this"}, tokens[1:]
 
     if token["tag"] == "[":
         return parse_list(tokens)
@@ -367,7 +371,6 @@ def parse_function(tokens):
         "parameters": parameters,
         "body": body_statements,
     }, tokens
-
 
 def test_parse_function():
     """
@@ -947,7 +950,7 @@ def parse_statement_list(tokens):
         statement, tokens = parse_statement(tokens)
         statements.append(statement)
         # we don't need a semicolon terminator after block-terminated statements
-        if statement["tag"] in ["if","while","function"]:     
+        if statement["tag"] in ["if","while","function","class"]:     
             continue
         # we don't need a semicolon terminator after function assignments
         if statement["tag"] == "assign" and statement["value"]["tag"] == "function":
@@ -1274,10 +1277,168 @@ def test_parse_function_statement():
         },
     }
 
+def parse_class_statement(tokens):
+    """
+    class_statement = "class" identifier "{" "members" identifier { "," identifier } ";" { class_method } "}"
+    class_method = ( "constructor" "(" [ identifier { "," identifier } ] ")" statement_list ) | ( "function" identifier "(" [ identifier { "," identifier } ] ")" statement_list )
+    """
+    assert tokens[0]["tag"] == "class", f"Expected 'class' at position {tokens[0]['position']}"
+    tokens = tokens[1:]
+    assert tokens[0]["tag"] == "identifier", f"Expected class name at position {tokens[0]['position']}"
+    class_name = tokens[0]["value"]
+    tokens = tokens[1:]
+    assert tokens[0]["tag"] == "{", f"Expected '{{' at position {tokens[0]['position']}"
+    tokens = tokens[1:]
+    
+    # Parse member declarations
+    assert tokens[0]["tag"] == "members", f"Expected 'members' at position {tokens[0]['position']}"
+    tokens = tokens[1:]
+    members = []
+    assert tokens[0]["tag"] == "identifier", f"Expected member name at position {tokens[0]['position']}"
+    members.append(tokens[0]["value"])
+    tokens = tokens[1:]
+    while tokens[0]["tag"] == ",":
+        tokens = tokens[1:]
+        assert tokens[0]["tag"] == "identifier", f"Expected member name at position {tokens[0]['position']}"
+        members.append(tokens[0]["value"])
+        tokens = tokens[1:]
+    assert tokens[0]["tag"] == ";", f"Expected ';' after member declarations at position {tokens[0]['position']}"
+    tokens = tokens[1:]
+    
+    constructor = None
+    methods = {}
+    
+    while tokens[0]["tag"] != "}":
+        # Parse constructor or method
+        is_constructor = tokens[0]["tag"] == "constructor"
+        
+        if is_constructor:
+            tokens = tokens[1:]
+        else:
+            # Methods must start with 'function' keyword
+            assert tokens[0]["tag"] == "function", f"Expected 'function' keyword before method at position {tokens[0]['position']}"
+            tokens = tokens[1:]
+            assert tokens[0]["tag"] == "identifier", f"Expected method name at position {tokens[0]['position']}"
+            method_name = tokens[0]["value"]
+            tokens = tokens[1:]
+        
+        # Parse parameters
+        assert tokens[0]["tag"] == "(", f"Expected '(' at position {tokens[0]['position']}"
+        tokens = tokens[1:]
+        parameters = []
+        if tokens[0]["tag"] != ")":
+            assert tokens[0]["tag"] == "identifier", f"Expected parameter name at position {tokens[0]['position']}"
+            if "line" in tokens[0]:
+                del tokens[0]["line"]
+            parameters.append(tokens[0])
+            tokens = tokens[1:]
+            while tokens[0]["tag"] == ",":
+                tokens = tokens[1:]
+                assert tokens[0]["tag"] == "identifier", f"Expected parameter name at position {tokens[0]['position']}"
+                if "line" in tokens[0]:
+                    del tokens[0]["line"]
+                parameters.append(tokens[0])
+                tokens = tokens[1:]
+        assert tokens[0]["tag"] == ")", f"Expected ')' at position {tokens[0]['position']}"
+        tokens = tokens[1:]
+        
+        # Parse method body
+        body, tokens = parse_statement_list(tokens)
+        
+        if is_constructor:
+            constructor = {
+                "parameters": parameters,
+                "body": body
+            }
+        else:
+            methods[method_name] = {
+                "parameters": parameters,
+                "body": body
+            }
+    
+    assert tokens[0]["tag"] == "}", f"Expected '}}' at position {tokens[0]['position']}"
+    tokens = tokens[1:]
+    
+    return {
+        "tag": "class",
+        "name": class_name,
+        "members": members,
+        "constructor": constructor,
+        "methods": methods
+    }, tokens
+
+
+def test_parse_class_statement():
+    """
+    class_statement = "class" identifier "{" "members" identifier { "," identifier } ";" { class_method } "}"
+    class_method = ( "constructor" "(" [ identifier { "," identifier } ] ")" statement_list ) | ( "function" identifier "(" [ identifier { "," identifier } ] ")" statement_list )
+    """
+    print("testing parse_class_statement...")
+    
+    # Simple class with just members
+    ast, tokens = parse_class_statement(tokenize("class Person { members name, age; }"))
+    assert ast == {
+        "tag": "class",
+        "name": "Person",
+        "members": ["name", "age"],
+        "constructor": None,
+        "methods": {}
+    }
+    
+    # Class with members and constructor
+    ast, tokens = parse_class_statement(tokenize("class Person { members name; constructor(n) { name = n } }"))
+    assert ast == {
+        "tag": "class",
+        "name": "Person",
+        "members": ["name"],
+        "constructor": {
+            "parameters": [{"tag": "identifier", "value": "n", "position": 41}],
+            "body": {
+                "tag": "statement_list",
+                "statements": [
+                    {
+                        "tag": "assign",
+                        "target": {"tag": "identifier", "value": "name"},
+                        "value": {"tag": "identifier", "value": "n"}
+                    }
+                ]
+            }
+        },
+        "methods": {}
+    }
+    
+    # Class with members, constructor, and methods
+    ast, tokens = parse_class_statement(tokenize("""
+        class Dog {
+            members name, age;
+            constructor(n, a) {
+                name = n;
+                age = a
+            }
+            function getName() {
+                return name
+            }
+            function getAge() {
+                return age
+            }
+        }
+    """))
+    assert ast["tag"] == "class"
+    assert ast["name"] == "Dog"
+    assert ast["members"] == ["name", "age"]
+    assert ast["constructor"] is not None
+    assert len(ast["constructor"]["parameters"]) == 2
+    assert ast["constructor"]["parameters"][0]["value"] == "n"
+    assert ast["constructor"]["parameters"][1]["value"] == "a"
+    assert "getName" in ast["methods"]
+    assert "getAge" in ast["methods"]
+    assert ast["methods"]["getName"]["body"]["statements"][0]["tag"] == "return"
+    assert ast["methods"]["getAge"]["body"]["statements"][0]["tag"] == "return"
+
 
 def parse_statement(tokens):
     """
-    statement = if_statement | while_statement | function_statement | return_statement | print_statement | exit_statement | import_statement | break_statement | continue_statement | assert_statement | expression
+    statement = if_statement | while_statement | class_statement | function_statement | return_statement | print_statement | exit_statement | import_statement | break_statement | continue_statement | assert_statement | expression
     """
     tag = tokens[0]["tag"]
     # note: none of these consumes a token
@@ -1285,6 +1446,8 @@ def parse_statement(tokens):
         return parse_if_statement(tokens)
     if tag == "while":
         return parse_while_statement(tokens)
+    if tag == "class":
+        return parse_class_statement(tokens)
     if tag == "function":
         return parse_function_statement(tokens)
     if tag == "return":
@@ -1306,7 +1469,7 @@ def parse_statement(tokens):
 
 def test_parse_statement():
     """
-    statement = if_statement | while_statement | function_statement | return_statement | print_statement | exit_statement | import_statement | break_statement | continue_statement | assert_statement | expression
+    statement = if_statement | while_statement | class_statement | function_statement | return_statement | print_statement | exit_statement | import_statement | break_statement | continue_statement | assert_statement | expression
     """
     print("testing parse_statement...")
 
@@ -1463,6 +1626,7 @@ if __name__ == "__main__":
         test_parse_return_statement,
         test_parse_print_statement,
         test_parse_function_statement,
+        test_parse_class_statement,
         test_parse_exit_statement,
         test_parse_break_statement,
         test_parse_continue_statement,

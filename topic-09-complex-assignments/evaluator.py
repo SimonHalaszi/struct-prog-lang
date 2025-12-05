@@ -427,6 +427,19 @@ def evaluate(ast, environment):
             "body": ast["body"],
             "environment": environment
         }, None # Function definition itself is a normal evaluation
+    
+    if ast["tag"] == "class":
+        # Store class definition in environment
+        class_def = {
+            "tag": "class",
+            "name": ast["name"],
+            "members": ast["members"],  # Store declared members
+            "constructor": ast["constructor"],
+            "methods": ast["methods"],
+            "environment": environment
+        }
+        environment[ast["name"]] = class_def
+        return class_def, None
 
     if ast["tag"] == "call":
         function, func_status = evaluate(ast["function"], environment)
@@ -436,10 +449,94 @@ def evaluate(ast, environment):
             arg_val, arg_status = evaluate(arg, environment)
             if arg_status == "exit": return arg_val, "exit"
             argument_values.append(arg_val)
+        
         if function.get("tag") == "builtin":
             return evaluate_builtin_function(function["name"], argument_values)
         
-        # regular function call:
+        # Check if calling a class (instantiation)
+        if function.get("tag") == "class":
+            class_def = function
+            
+            # Create new instance with declared members initialized to null
+            instance = {}
+            for member in class_def["members"]:
+                instance[member] = {"tag": "null"}
+            
+            # Store reference to class definition for validation
+            instance["$class"] = class_def
+            
+            # Add methods to instance as bound functions
+            for method_name, method_def in class_def["methods"].items():
+                instance[method_name] = {
+                    "tag": "method",
+                    "parameters": method_def["parameters"],
+                    "body": method_def["body"],
+                    "environment": class_def["environment"],
+                    "instance": instance
+                }
+            
+            # Call constructor if it exists
+            if class_def["constructor"]:
+                constructor = class_def["constructor"]
+                # Create local environment with all members directly accessible
+                constructor_env = {"$parent": class_def["environment"]}
+                
+                # Add all instance members to local scope
+                for member in class_def["members"]:
+                    constructor_env[member] = instance[member]
+                
+                # Bind constructor parameters
+                for param, arg in zip(constructor["parameters"], argument_values):
+                    constructor_env[param["value"]] = arg
+                
+                # Execute constructor body
+                val, status = evaluate(constructor["body"], constructor_env)
+                
+                # Copy modified members back to instance
+                for member in class_def["members"]:
+                    instance[member] = constructor_env[member]
+                
+                if status == "return":
+                    pass  # Constructor can return early
+                elif status == "exit":
+                    return val, "exit"
+                elif status:
+                    raise Exception(f"Unexpected status '{status}' in constructor")
+            
+            return instance, None
+        
+        # Check if this is a method call
+        if function.get("tag") == "method":
+            # Method call - add members directly to local scope
+            instance = function["instance"]
+            local_environment = {"$parent": function["environment"]}
+            
+            # Add all instance members to local scope
+            class_def = instance["$class"]
+            for member in class_def["members"]:
+                local_environment[member] = instance[member]
+            
+            # Bind method parameters
+            for name, val in zip(function["parameters"], argument_values):
+                local_environment[name["value"]] = val
+            
+            # Execute method body
+            val, status = evaluate(function["body"], local_environment)
+            
+            # Copy modified members back to instance
+            for member in class_def["members"]:
+                instance[member] = local_environment[member]
+            
+            if status == "return":
+                return val, None
+            elif status == "exit":
+                return val, "exit"
+            elif status in ["break", "continue"]:
+                raise Exception(f"'{status}' statement propagated out of method call.")
+            else:
+                return None, None
+        
+        # Regular function call
         local_environment = {
             name["value"]: val
             for name, val in zip(function["parameters"], argument_values)
@@ -471,6 +568,12 @@ def evaluate(ast, environment):
             return base[index], None
         if type(index) == str:
             assert type(base) == dict
+            # Validate member access on class instances
+            if "$class" in base and not index.startswith("$"):
+                class_def = base["$class"]
+                # Allow access to methods
+                if index not in class_def["members"] and index not in class_def["methods"]:
+                    raise Exception(f"Property '{index}' is not a declared member of class '{class_def['name']}'")
             if index not in base: raise KeyError(f"Key '{index}' not found in object")
             return base[index], None
         assert False, f"Unknown index type [{index}]"
@@ -514,6 +617,11 @@ def evaluate(ast, environment):
                 target_base = base
                 target_index = index
             elif isinstance(base, dict):
+                # Validate member access on class instances for assignment
+                if "$class" in base and isinstance(index, str) and not index.startswith("$"):
+                    class_def = base["$class"]
+                    if index not in class_def["members"]:
+                        raise Exception(f"Cannot assign to '{index}': not a declared member of class '{class_def['name']}'")
                 target_base = base
                 target_index = index
             else:

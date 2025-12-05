@@ -7,7 +7,10 @@ patterns = [
     [r'"([^"]|"")*"', "string"],  # string literals
     [r"true|false", "boolean"],  # boolean literals
     [r"null", "null"],  # the null literal
+    [r"constructor", "constructor"],  # constructor keyword
     [r"function", "function"],  # function keyword
+    [r"class", "class"],  # class keyword
+    [r"members", "members"],  # members keyword
     [r"return", "return"],  # return keyword
     [r"extern", "extern"],  # extern keyword
     [r"if", "if"],  # if keyword
@@ -236,7 +239,10 @@ def test_multiple_tokens():
 def test_keywords():
     print("testing keywords...")
     for keyword in [
+        "constructor",
         "function",
+        "class",
+        "members",
         "return",
         "if",
         "else",
